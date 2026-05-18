@@ -6,26 +6,43 @@
  * Authors: Daniel Wagner <dwagner@suse.de>
  */
 
-#include "private-fabrics.h"
+#include "private.h"
 
+/* No-fabrics stub; real implementation in fabrics.c */
 bool traddr_is_hostname(struct libnvme_global_ctx *ctx,
 		const char *transport, const char *traddr)
 {
 	return false;
 }
 
+/* No-fabrics stub; real implementation in fabrics.c */
 void libnvmf_default_config(struct libnvme_fabrics_config *cfg)
 {
 }
 
-ctrl_match_t libnvmf_candidate_init(struct libnvme_global_ctx *ctx,
-		struct candidate_args *candidate,
-		const struct libnvme_ctrl_params *params)
-{
-	return NULL;
-}
-
+/* No-fabrics stub; real implementation in tree-fabrics.c */
 void libnvmf_read_sysfs_fabrics_attrs(struct libnvme_global_ctx *ctx,
 		libnvme_ctrl_t c)
 {
+}
+
+/* No-fabrics stub; real implementation in tree-fabrics.c */
+libnvme_ctrl_t libnvme_ctrl_find(libnvme_subsystem_t s,
+		const struct libnvme_ctrl_params *params, libnvme_ctrl_t p)
+{
+#ifndef _WIN32
+	struct libnvme_ctrl *c;
+
+	c = p ? libnvme_subsystem_next_ctrl(s, p) :
+		libnvme_subsystem_first_ctrl(s);
+	for (; c; c = libnvme_subsystem_next_ctrl(s, c)) {
+		if (!streq0(c->transport, params->transport))
+			continue;
+		if (params->traddr && c->traddr &&
+		    !streqcase0(c->traddr, params->traddr))
+			continue;
+		return c;
+	}
+#endif
+	return NULL;
 }
