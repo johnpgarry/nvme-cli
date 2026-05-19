@@ -1,0 +1,47 @@
+---
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# This file is part of nvme-cli.
+
+name: Build no-fabrics
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+  workflow_dispatch:
+
+jobs:
+  build-nofabrics:
+    name: no-fabrics minimal build
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/linux-nvme/debian:latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Mark repo as safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Configure
+        run: |
+          meson setup .build-nofabrics   \
+            --werror                     \
+            -Dfabrics=disabled           \
+            -Dmi=disabled                \
+            -Dpython=disabled            \
+            -Djson-c=disabled            \
+            -Dlibkmod=disabled           \
+            -Dopenssl=disabled           \
+            -Dkeyutils=disabled
+      - name: Build
+        run: meson compile -C .build-nofabrics
+      - name: Test
+        run: meson test -C .build-nofabrics
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        name: upload logs
+        if: failure()
+        with:
+          name: no-fabrics log files
+          path: |
+            .build-nofabrics/meson-logs/*.txt
