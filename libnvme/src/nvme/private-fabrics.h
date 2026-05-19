@@ -16,10 +16,8 @@
 
 #include "nvme/private.h"
 
-struct libnvmf_context {
-	struct libnvme_global_ctx *ctx;
-
-	/* common callbacks */
+struct libnvmf_hooks {
+	/* common hooks */
 	bool (*decide_retry)(struct libnvmf_context *fctx, int err,
 			void *user_data);
 	void (*connected)(struct libnvmf_context *fctx, struct libnvme_ctrl *c,
@@ -29,7 +27,7 @@ struct libnvmf_context {
 			const char *transport, const char *traddr,
 			const char *trsvcid, void *user_data);
 
-	/* discovery callbacks */
+	/* discovery hooks */
 	void (*discovery_log)(struct libnvmf_context *fctx,
 			bool connect,
 			struct nvmf_discovery_log *log,
@@ -41,6 +39,16 @@ struct libnvmf_context {
 	int (*parser_next_line)(struct libnvmf_context *fctx,
 			void *user_data);
 
+	void *user_data;
+};
+
+struct libnvmf_context {
+	struct libnvme_global_ctx *ctx;
+	struct libnvmf_hooks hooks;
+
+	/* NVMe controller parameters */
+	struct libnvme_ctrl_params ctrl_params;
+
 	/* discovery defaults */
 	int default_max_discovery_retries;
 	int default_keep_alive_timeout;
@@ -48,15 +56,6 @@ struct libnvmf_context {
 	/* common fabrics configuration */
 	const char *device;
 	bool persistent;
-	struct libnvme_fabrics_config cfg;
-
-	/* connection configuration */
-	const char *subsysnqn;
-	const char *transport;
-	const char *traddr;
-	const char *trsvcid;
-	const char *host_traddr;
-	const char *host_iface;
 
 	/* host configuration */
 	const char *hostnqn;
@@ -68,8 +67,6 @@ struct libnvmf_context {
 	const char *keyring;
 	char *tls_key;
 	const char *tls_key_identity;
-
-	void *user_data;
 };
 
 
@@ -185,25 +182,6 @@ struct candidate_args {
 };
 typedef bool (*ctrl_match_t)(struct libnvme_ctrl *c,
 		struct candidate_args *candidate);
-
-bool libnvme_tree_ctrl_match(struct libnvme_ctrl *c,
-		struct candidate_args *candidate);
-ctrl_match_t libnvmf_candidate_init(struct libnvme_global_ctx *ctx,
-		struct candidate_args *candidate,
-		const struct libnvmf_context *fctx);
-
-bool traddr_is_hostname(struct libnvme_global_ctx *ctx,
-		const char *transport, const char *traddr);
-
-void libnvmf_default_config(struct libnvme_fabrics_config *cfg);
-
-void libnvmf_read_sysfs_fabrics_attrs(struct libnvme_global_ctx *ctx,
-		libnvme_ctrl_t c);
-
-ctrl_match_t libnvme_candidate_init(struct libnvme_global_ctx *ctx,
-		struct candidate_args *candidate, struct libnvmf_context *fctx);
-libnvme_ctrl_t libnvme_ctrl_find(libnvme_subsystem_t s,
-		struct libnvmf_context *fctx, libnvme_ctrl_t p);
 
 bool libnvmf_ctrl_match_config(struct libnvme_ctrl *c,
 		struct libnvmf_context *fctx);
