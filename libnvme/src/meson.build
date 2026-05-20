@@ -11,6 +11,7 @@ sources = [
 if host_system == 'windows'
     sources += [
         'nvme/mem-win.c',
+        'nvme/no-linux.c'
     ]
 else
     sources += [
