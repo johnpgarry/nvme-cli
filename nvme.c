@@ -3559,6 +3559,10 @@ static int list_subsys(int argc, char **argv, struct command *acmd,
 
 	err = libnvme_scan_topology(ctx, filter, (void *)devname);
 	if (err) {
+		/* Do not report an error when nvme_core module is not loaded */
+		if (errno == ENOENT)
+			return 0;
+
 		nvme_show_error("Failed to scan topology: %s", libnvme_strerror(err));
 		return -errno;
 	}
@@ -3642,6 +3646,12 @@ static int list(int argc, char **argv, struct command *acmd, struct plugin *plug
 	}
 	err = libnvme_scan_topology(ctx, NULL, NULL);
 	if (err < 0) {
+		/* Do not report an error when nvme_core module is not loaded */
+		if (errno == ENOENT) {
+			nvme_show_list_items(ctx, flags);
+			return 0;
+		}
+
 		nvme_show_error("Failed to scan topology: %s", libnvme_strerror(-err));
 		return err;
 	}
@@ -6647,7 +6657,9 @@ static void show_relatives(const char *name, nvme_print_flags_t flags)
 
 	err = libnvme_scan_topology(ctx, NULL, NULL);
 	if (err < 0) {
-		nvme_show_error("Failed to scan topology: %s", libnvme_strerror(-err));
+		/* Do not report an error when nvme_core module is not loaded */
+		if (errno != ENOENT)
+			nvme_show_error("Failed to scan topology: %s", libnvme_strerror(-err));
 		return;
 	}
 
@@ -10419,6 +10431,10 @@ static int show_topology_cmd(int argc, char **argv, struct command *acmd, struct
 
 	err = libnvme_scan_topology(ctx, filter, (void *)devname);
 	if (err < 0) {
+		/* Do not report an error when nvme_core module is not loaded */
+		if (errno == ENOENT)
+			return 0;
+
 		nvme_show_error("Failed to scan topology: %s", libnvme_strerror(-err));
 		return err;
 	}
