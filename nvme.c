@@ -90,12 +90,12 @@ static unsigned long long elapsed_utime(struct timeval start_time,
 	return ret;
 }
 
-static int open_dev(char *dev)
+static int open_dev(char *dev, int flags)
 {
 	int err, fd;
 
 	devicename = basename(dev);
-	err = open(dev, O_RDONLY);
+	err = open(dev, flags);
 	if (err < 0)
 		goto perror;
 	fd = err;
@@ -123,7 +123,7 @@ static int check_arg_dev(int argc, char **argv)
 	return 0;
 }
 
-static int get_dev(int argc, char **argv)
+static int get_dev(int argc, char **argv, int flags)
 {
 	int ret;
 
@@ -131,7 +131,7 @@ static int get_dev(int argc, char **argv)
 	if (ret)
 		return ret;
 
-	return open_dev(argv[optind]);
+	return open_dev(argv[optind], flags);
 }
 
 int parse_and_open(int argc, char **argv, const char *desc,
@@ -143,11 +143,21 @@ int parse_and_open(int argc, char **argv, const char *desc,
 	if (ret)
 		return ret;
 
-	ret = get_dev(argc, argv);
+	ret = get_dev(argc, argv, O_RDONLY);
 	if (ret < 0)
 		argconfig_print_help(desc, clo);
 
 	return ret;
+}
+
+int open_exclusive(int argc, char **argv, int force)
+{
+	int flags = O_RDONLY;
+
+	if (!force)
+		flags |= O_EXCL;
+
+	return get_dev(argc, argv, flags);
 }
 
 static const char *output_format = "Output format: normal|json|binary";
@@ -3503,9 +3513,11 @@ static int format(int argc, char **argv, struct command *cmd, struct plugin *plu
 	const char *pil = "[0-1]: protection info location last/first 8 bytes of metadata";
 	const char *pi = "[0-3]: protection info off/Type 1/Type 2/Type 3";
 	const char *ms = "[0-1]: extended format off/on";
+
 	const char *reset = "Automatically reset the controller after successful format";
 	const char *timeout = "timeout value, in milliseconds";
 	const char *bs = "target block size";
+	const char *force = "The \"I know what I'm doing\" flag, skip confirmation before sending command";
 	struct nvme_id_ns ns;
 	int err, fd, i;
 	__u8 prev_lbaf = 0;
@@ -3521,6 +3533,7 @@ static int format(int argc, char **argv, struct command *cmd, struct plugin *plu
 		__u8  ms;
 		__u64 bs;
 		int reset;
+		int force;
 	};
 
 	struct config cfg = {
@@ -3530,6 +3543,7 @@ static int format(int argc, char **argv, struct command *cmd, struct plugin *plu
 		.ses          = 0,
 		.pi           = 0,
 		.reset        = 0,
+		.force        = 0,
 		.bs           = 0,
 	};
 
@@ -3542,15 +3556,32 @@ static int format(int argc, char **argv, struct command *cmd, struct plugin *plu
 		{"pil",          'p', "NUM",  CFG_BYTE,     &cfg.pil,          required_argument, pil},
 		{"ms",           'm', "NUM",  CFG_BYTE,     &cfg.ms,           required_argument, ms},
 		{"reset",        'r', "",     CFG_NONE,     &cfg.reset,        no_argument,       reset},
+		{"force",        'f', "",     CFG_NONE,     &cfg.force,        no_argument,       force},
 		{"block-size",   'b', "NUM",  CFG_LONG_SUFFIX, &cfg.bs,        required_argument, bs},
 		{NULL}
 	};
 
-	fd = parse_and_open(argc, argv, desc, command_line_options, &cfg, sizeof(cfg));
+	err = argconfig_parse(argc, argv, desc, command_line_options, &cfg, sizeof(cfg));
+	if (err)
+		goto ret;
+
+	err = fd = open_exclusive(argc, argv, cfg.force);
 	if (fd < 0) {
-		err = fd;
+		if (errno == EBUSY) {
+			fprintf(stderr, "Failed to open %s.\n",
+		basename(argv[optind]));
+			fprintf(stderr,
+				"Namespace is currently busy.\n"
+				"Use the force [--force|-f] option to ignore that.\n");
+		} else {
+			argconfig_print_help(desc, command_line_options);
+		}
 		goto ret;
 	}
+
+	err = fd = parse_and_open(argc, argv, desc, command_line_options, &cfg, sizeof(cfg));
+	if (fd < 0)
+		goto ret;
 
 	if (cfg.lbaf != 0xff && cfg.bs !=0) {
 		fprintf(stderr,
