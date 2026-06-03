@@ -1938,6 +1938,26 @@ static int scan_dev_filter(const struct dirent *d)
 	return 0;
 }
 
+/* Same as scan_dev_filter, but include partitions */
+static int scan_dev_filter2(const struct dirent *d)
+{
+	char path[264];
+	struct stat bd;
+
+	if (d->d_name[0] == '.')
+		return 0;
+
+	if (strstr(d->d_name, "nvme")) {
+		snprintf(path, sizeof(path), "%s%s", dev, d->d_name);
+		if (stat(path, &bd))
+			return 0;
+		if (!S_ISBLK(bd.st_mode))
+			return 0;
+		return 1;
+	}
+	return 0;
+}
+
 static int list(int argc, char **argv, struct command *cmd, struct plugin *plugin)
 {
 	char path[264];
@@ -3176,23 +3196,82 @@ ret:
 static int reset(int argc, char **argv, struct command *cmd, struct plugin *plugin)
 {
 	const char *desc = "Resets the NVMe controller\n";
-	int err, fd;
+	struct dirent **devices;
+	int err, fd, n, i;
+	const char *force = "The \"I know what I'm doing\" flag, skip confirmation before sending command";
+
+	printf("%s\n", __func__);
+
+
+	struct config {
+		int force;
+	};
+
+	struct config cfg = {
+		.force        = 0,
+	};
 
 	const struct argconfig_commandline_options command_line_options[] = {
+		{"force",        'f', "",     CFG_NONE,     &cfg.force,        no_argument,       force},
 		{NULL}
 	};
 
-	fd = parse_and_open(argc, argv, desc, command_line_options, NULL, 0);
-	if (fd < 0) {
-		err = fd;
+	err = argconfig_parse(argc, argv, desc, command_line_options, &cfg, sizeof(cfg));
+	printf("%s1 after argconfig_parse err=%d\n", __func__, err);
+	if (err)
+		goto ret;
+
+	n = scandir(dev, &devices, scan_dev_filter2, alphasort);
+	if (n < 0) {
+		fprintf(stderr, "no NVMe device(s) detected.\n");
+		err = n;
 		goto ret;
 	}
+
+	printf("%s argv[optind]=%s\n", __func__, argv[optind]);
+	for (i = 0; i < n; i++) {
+		int myfd;
+		char myname[512];
+		int flags = 0;
+
+		snprintf(myname, sizeof(myname), "%s%s", dev, devices[i]->d_name);
+		printf("%s2 i=%d myname=%s\n", __func__, i, myname);
+		if (!strstr(myname, argv[optind]))
+			continue;
+		printf("%s2.1 i=%d myname=%s CORRECT device\n", __func__, i, myname);
+		if (!cfg.force)
+			flags |= O_EXCL;
+		myfd = open_dev(myname, flags);
+
+		if (myfd >= 0) {
+			close(myfd);
+		} else {
+			if (myfd == EBUSY) {
+				fprintf(stderr, "Failed to open %s.\n",
+					basename(argv[optind]));
+				fprintf(stderr,
+					"Controller Namespace/partition is currently busy.\n"
+					"Use the force [--force|-f] option to ignore that.\n");
+			} else {
+				argconfig_print_help(desc, command_line_options);
+			}
+			goto cleanup_devices;
+		}
+	}
+
+	err = fd = parse_and_open(argc, argv, desc, command_line_options, NULL, 0);
 
 	err = nvme_reset_controller(fd);
 	if (err < 0)
 		perror("Reset");
 
 	close(fd);
+
+cleanup_devices:
+	for (i = 0; i < n; i++)
+		free(devices[i]);
+	free(devices);
+
 ret:
 	return nvme_status_to_errno(err, false);
 }
