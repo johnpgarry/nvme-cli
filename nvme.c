@@ -1471,6 +1471,22 @@ static int scan_ctrl_paths_filter(const struct dirent *d)
 	return 0;
 }
 
+/* Same as scan_ctrl_paths_filter(), but ignore ctrl NSes */
+static int scan_ctrl_paths_filter2(const struct dirent *d)
+{
+	int id, nsid;
+
+	if (d->d_name[0] == '.')
+		return 0;
+
+	if (strstr(d->d_name, "nvme")) {
+		if (sscanf(d->d_name, "nvme%dn%d", &id, &nsid) == 2)
+			return 1;
+	}
+
+	return 0;
+}
+
 static char *get_nvme_ctrl_path_ana_state(char *path, int nsid)
 {
 	struct dirent **paths;
@@ -3173,14 +3189,165 @@ ret:
 	return nvme_status_to_errno(err, false);
 }
 
+static bool reset_exclusive_open_dev(char *dev_name, int force, const char *desc,
+		const struct argconfig_commandline_options options[])
+{
+	int flags = 0;
+	int fd;
+
+	if (!force)
+		flags |= O_EXCL;
+	fd = open_dev(dev_name, flags);
+	if (fd < 0) {
+		if (fd == EBUSY) {
+			fprintf(stderr, "Failed to open %s.\n", dev_name);
+			fprintf(stderr,
+				"Namespace is currently busy.\n"
+				"Use the force [--force|-f] option to ignore that.\n");
+		} else {
+				argconfig_print_help(desc, options);
+		}
+		return false;
+	}
+	close(fd);
+	return true;
+}
+
+static bool reset_exclusive_open(struct dirent **devices, int n, int force, const char *desc,
+	const struct argconfig_commandline_options options[])
+{
+	int i;
+
+	for (i = 0; i < n; i++) {
+		char dev_name[512];
+		int j, k;
+		char block_dir[512];
+		struct dirent **bdevs;
+		int res;
+
+		snprintf(dev_name, sizeof(dev_name), "%s%s", dev, devices[i]->d_name);
+		if (!reset_exclusive_open_dev(dev_name, force, desc, options))
+			return false;
+
+		snprintf(block_dir, sizeof(block_dir), "/sys/block/%s", devices[i]->d_name);
+
+		k = scandir(block_dir, &bdevs, scan_ctrl_paths_filter2, alphasort);
+		if (k <= 0)
+			return true;
+
+		for (j = 0; j < k; j++) {
+			snprintf(dev_name, sizeof(dev_name), "%s%s", dev, bdevs[i]->d_name);
+			res = reset_exclusive_open_dev(dev_name, force, desc, options);
+			if (!res)
+				break;
+		}
+
+		for (j = 0; j < k; j++)
+			free(bdevs[j]);
+		free(bdevs);
+
+		return res;
+	}
+	return true;
+}
+
 static int reset(int argc, char **argv, struct command *cmd, struct plugin *plugin)
 {
+	struct dirent **ctrl_nses;
 	const char *desc = "Resets the NVMe controller\n";
+	struct subsys_list_item *slist;
+	struct dirent **subsys_devices;
 	int err, fd;
+	int subcnt = 0;
+	int i, n;
+	char ctrl_sysfs_path[512];
+	char subsys_sysfs_path[512];
+	char *subsnqn;
+	int res;
+	const char *force = "The \"I know what I'm doing\" flag, skip confirmation before sending command";
+
+	struct config {
+		int force;
+	};
+
+	struct config cfg = {
+		.force        = 0,
+	};
 
 	const struct argconfig_commandline_options command_line_options[] = {
+		{"force",        'f', "",     CFG_NONE,     &cfg.force,        no_argument,       force},
 		{NULL}
 	};
+	err = argconfig_parse(argc, argv, desc, command_line_options, &cfg, sizeof(cfg));
+	if (err)
+		goto ret;
+
+
+	fd = open_dev(argv[optind], 0);
+	if (fd < 0) {
+		err = fd;
+		goto ret;
+	}
+	err = nvme_verify_chr(fd);
+	close(fd);
+	if (err)
+		goto ret;
+
+	snprintf(ctrl_sysfs_path, sizeof(ctrl_sysfs_path), "%s/%s", "/sys/class/nvme", basename(argv[optind]));
+
+	/* Find any non-controller NS block devices */
+	n = scandir(ctrl_sysfs_path, &ctrl_nses, scan_ctrl_paths_filter2, alphasort);
+	if (n < 0) {
+		fprintf(stderr, "no NVMe device(s) detected.\n");
+		err = n;
+		goto ret;
+	}
+
+	res = reset_exclusive_open(ctrl_nses, n, cfg.force, desc, command_line_options);
+
+	for (i = 0; i < n; i++)
+		free(ctrl_nses[i]);
+	free(ctrl_nses);
+
+	if (!res) {
+		err = -1;
+		goto ret;
+	}
+
+	subsnqn = get_nvme_subsnqn(ctrl_sysfs_path);
+	if (!subsnqn) {
+		fprintf(stderr, "Could not read subsnqn for %s\n",
+				ctrl_sysfs_path);
+		err = -1;
+		goto ret;
+	}
+	slist = get_subsys_list(&subcnt, subsnqn, NVME_NSID_ALL);
+	if (!slist || subcnt != 1) {
+		fprintf(stderr, "Did not find a subsys to match %s\n",
+				subsnqn);
+		return nvme_status_to_errno(-1, false);
+	}
+
+	snprintf(subsys_sysfs_path, sizeof(subsys_sysfs_path), "%s%s", subsys_dir, slist[0].name);
+	free_subsys_list(slist, subcnt);
+
+	n = scandir(subsys_sysfs_path, &subsys_devices, scan_dev_filter, alphasort);
+	if (n < 0) {
+		fprintf(stderr, "no NVMe device(s) detected.\n");
+		err = n;
+		goto ret;
+	}
+
+	res = reset_exclusive_open(subsys_devices, n, cfg.force, desc, command_line_options);
+
+	for (i = 0; i < n; i++)
+		free(subsys_devices[i]);
+	free(subsys_devices);
+
+	if (!res) {
+		err = -1;
+		goto ret;
+	}
 
 	fd = parse_and_open(argc, argv, desc, command_line_options, NULL, 0);
 	if (fd < 0) {

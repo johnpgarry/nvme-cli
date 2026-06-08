@@ -18,7 +18,7 @@
 
 #include "nvme-ioctl.h"
 
-static int nvme_verify_chr(int fd)
+int nvme_verify_chr(int fd)
 {
 	static struct stat nvme_stat;
 	int err = fstat(fd, &nvme_stat);
