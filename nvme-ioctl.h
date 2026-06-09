@@ -155,6 +155,7 @@ int nvme_sec_recv(int fd, __u32 nsid, __u8 nssf, __u16 spsp,
 int nvme_lockdown(int fd, __u8 scp, __u8 prhbt, __u8 ifc, __u8 ofi,
 		  __u8 uuid);
 
+int nvme_verify_chr(int fd);
 int nvme_subsystem_reset(int fd);
 int nvme_reset_controller(int fd);
 int nvme_ns_rescan(int fd);
