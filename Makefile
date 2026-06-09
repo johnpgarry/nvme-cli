@@ -79,8 +79,6 @@ PLUGIN_OBJS :=					\
 	plugins/amzn/amzn-nvme.o		\
 	plugins/lnvm/lnvm-nvme.o		\
 	plugins/memblaze/memblaze-nvme.o	\
-	plugins/wdc/wdc-nvme.o			\
-	plugins/wdc/wdc-utils.o			\
 	plugins/huawei/huawei-nvme.o		\
 	plugins/netapp/netapp-nvme.o		\
 	plugins/toshiba/toshiba-nvme.o		\
